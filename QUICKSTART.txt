@@ -1,0 +1,141 @@
+QUICK START GUIDE - PDF Split & Combine
+========================================
+
+✅ PROJECT READY TO USE!
+
+🚀 THREE WAYS TO RUN:
+
+1. **Windows (Easiest)**:
+   - Double-click: run.bat
+   OR type in PowerShell:
+   - python main.py
+
+2. **Linux/Mac**:
+   - chmod +x run.sh
+   - ./run.sh
+   OR:
+   - python3 main.py
+
+3. **Manual Setup**:
+   ```
+   cd c:\source\split_pdfs
+   pip install -r requirements.txt
+   python main.py
+   ```
+
+📋 FIRST TIME SETUP:
+=====================
+
+If you get a "module not found" error:
+   pip install -r requirements.txt --prefer-binary
+
+If PyQt6 won't install:
+   pip install PyQt6 pypdf Pillow
+
+✨ FEATURES:
+============
+
+✓ Open any PDF file
+✓ View all pages as thumbnails
+✓ Create multiple split groups
+✓ Drag pages to organize splits
+✓ Rename each split
+✓ Export each split as separate PDF
+✓ Keyboard shortcuts (Ctrl+O, Ctrl+E)
+
+📊 WORKFLOW:
+============
+
+1. Open PDF file → Ctrl+O
+2. Wait for thumbnails to load (~2-5 seconds)
+3. Click "+ Add Split Group" to create splits
+4. Drag pages from left to right panels
+5. Rename splits as needed
+6. Export → Ctrl+E
+7. Select output folder
+8. PDF files created in your folder!
+
+🎯 EXAMPLE USE CASES:
+=====================
+
+Case 1: Split a report by chapters
+- Chapter 1 (pages 1-10) → Split1
+- Chapter 2 (pages 11-25) → Split2
+- Chapter 3 (pages 26-40) → Split3
+- Export → 3 separate PDFs
+
+Case 2: Extract specific sections
+- Drag important pages to "Important"
+- Drag references to "References"
+- Export → 2 PDFs
+
+Case 3: Reorganize document
+- Create custom page groupings
+- Rename to meaningful names
+- Export reorganized files
+
+⌨️ KEYBOARD SHORTCUTS:
+======================
+
+Ctrl+O  → Open PDF
+Ctrl+E  → Export Splits
+Delete  → Remove split (when selected)
+
+❓ TROUBLESHOOTING:
+===================
+
+Q: "ModuleNotFoundError: No module named 'PyQt6'"
+A: Run: pip install -r requirements.txt
+
+Q: Application crashes on startup
+A: Delete __pycache__ folder and try again
+   Or reinstall: pip install --force-reinstall -r requirements.txt
+
+Q: Drag-drop not working
+A: Ensure split group exists (click + Add Split Group first)
+
+Q: Thumbnails loading very slowly
+A: Normal for large PDFs (500+ pages). Just wait or load smaller PDFs.
+
+Q: Export fails
+A: Check that output folder exists and is writable
+
+📁 FILE STRUCTURE:
+==================
+
+split_pdfs/
+├── main.py                 ← Main entry point
+├── requirements.txt        ← Dependencies
+├── README.md              ← Full documentation
+├── run.bat / run.sh       ← Quick launch scripts
+├── models/
+│   └── pdf_model.py       ← Data structures
+├── services/
+│   ├── pdf_service.py     ← PDF operations
+│   └── thumbnail_service.py ← Image generation
+└── ui/
+    ├── main_window.py     ← Main UI window
+    ├── widgets.py         ← UI components
+    └── dialogs.py         ← Export dialog
+
+🔧 SYSTEM REQUIREMENTS:
+=======================
+
+- Python: 3.8+
+- OS: Windows, Linux, macOS
+- RAM: 512MB minimum
+- Disk: 100MB for installation + space for PDFs
+
+📦 DEPENDENCIES INSTALLED:
+===========================
+
+- PyQt6 (GUI framework)
+- pypdf (PDF manipulation)
+- Pillow (Image processing)
+
+✅ EVERYTHING IS READY!
+
+To start the application now, run:
+   python main.py
+
+Enjoy!

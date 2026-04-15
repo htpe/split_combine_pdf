@@ -53,6 +53,10 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+## Build a standalone Windows EXE
+
+See [BUILD_EXE.md](BUILD_EXE.md) for the PyInstaller build.
+
 macOS/Linux can also use:
 ```bash
 ./run.sh

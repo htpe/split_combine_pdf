@@ -104,7 +104,12 @@ class MainWindow(QMainWindow):
         
         # Ctrl+E: Export
         export_action = QAction(self)
-        export_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_E))
+        export_action.setShortcuts(
+            [
+                QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_E),
+                QKeySequence(Qt.Modifier.META | Qt.Key.Key_E),
+            ]
+        )
         export_action.triggered.connect(self.export_splits)
         self.addAction(export_action)
     

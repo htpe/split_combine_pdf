@@ -17,7 +17,7 @@ echo "[2/3] Checking dependencies..."
 python3 -c "import PyQt6" 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "Installing dependencies..."
-    pip install -r requirements.txt
+    python3 -m pip install -r requirements.txt
 fi
 
 echo "[3/3] Launching application..."

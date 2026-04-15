@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -372,7 +373,7 @@ class CombinePreviewDialog(QDialog):
         self.load_pages()
 
     def init_ui(self):
-        filename = self.filepath.split('\\')[-1]
+        filename = Path(self.filepath).name
         self.setWindowTitle(f"Preview & Rotate - {filename}")
         self.resize(900, 650)
 
@@ -482,7 +483,7 @@ class PDFFileItemWidget(QWidget):
         layout = QVBoxLayout()
         
         # File info header
-        filename = self.filepath.split('\\')[-1]
+        filename = Path(self.filepath).name
         header = QHBoxLayout()
         header.addWidget(QLabel(f"📄 {filename}"))
         header.addWidget(QLabel(f"({self.total_pages} pages)"))

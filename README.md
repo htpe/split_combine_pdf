@@ -23,12 +23,26 @@ A modern PyQt6-based desktop application for splitting and combining PDF files w
 
 1. Navigate to the project directory:
 ```bash
-cd c:\source\split_pdfs
+cd /path/to/split_combine_pdf
 ```
 
-2. Install dependencies:
+2. (Recommended) Create and activate a virtual environment:
+
+macOS/Linux:
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Windows (PowerShell):
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+3. Install dependencies:
+```bash
+python -m pip install -r requirements.txt
 ```
 
 ## Usage
@@ -37,6 +51,11 @@ pip install -r requirements.txt
 
 ```bash
 python main.py
+```
+
+macOS/Linux can also use:
+```bash
+./run.sh
 ```
 
 The application will open in a new window.

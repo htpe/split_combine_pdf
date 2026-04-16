@@ -5,11 +5,119 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QGridLayout, QScrollArea,
     QLineEdit, QFrame, QSpinBox, QComboBox, QFileDialog, QMenu,
-    QDialog, QListView, QMessageBox
+    QDialog, QListView, QMessageBox, QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QSize, QEvent
-from PyQt6.QtGui import QDrag, QPixmap, QColor, QTransform, QIcon
+from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QSize, QEvent, QUrl, QByteArray
+from PyQt6.QtGui import QDrag, QPixmap, QColor, QTransform, QIcon, QDesktopServices
 from PyQt6.QtCore import QPoint
+
+
+class DragHandleLabel(QLabel):
+    """Small drag handle that reorders items in a QListWidget."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._list_widget = None
+        self._list_item = None
+        self._start_pos = None
+
+        self.setText("⋮⋮")
+        self.setToolTip("Drag to reorder PDFs")
+        self.setStyleSheet("color: #6b7280; padding: 0 6px; font-size: 16px;")
+
+    def set_drag_context(self, list_widget: QListWidget, list_item: QListWidgetItem):
+        self._list_widget = list_widget
+        self._list_item = list_item
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._start_pos = event.position().toPoint()
+        return super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return super().mouseMoveEvent(event)
+        if self._start_pos is None or self._list_widget is None or self._list_item is None:
+            return super().mouseMoveEvent(event)
+
+        if (event.position().toPoint() - self._start_pos).manhattanLength() < QApplication.startDragDistance():
+            return super().mouseMoveEvent(event)
+
+        row = self._list_widget.row(self._list_item)
+        if row < 0:
+            return
+
+        self._list_widget.setCurrentItem(self._list_item)
+
+        mime = QMimeData()
+        mime.setData(PDFFileListWidget.MIME_TYPE, QByteArray(str(row).encode("utf-8")))
+
+        drag = QDrag(self._list_widget)
+        drag.setMimeData(mime)
+
+        # Visual feedback
+        try:
+            parent = self.parentWidget() or self
+            drag.setPixmap(parent.grab())
+        except Exception:
+            pass
+
+        drag.exec(Qt.DropAction.MoveAction)
+
+
+class PDFFileListWidget(QListWidget):
+    """List widget that supports internal reordering via a custom drag mime type."""
+
+    MIME_TYPE = "application/x-combinepdf-file-row"
+    order_changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragDropMode(QListWidget.DragDropMode.DragDrop)
+
+    def dropEvent(self, event):
+        if event.source() is self and event.mimeData().hasFormat(self.MIME_TYPE):
+            try:
+                source_row = int(bytes(event.mimeData().data(self.MIME_TYPE)).decode("utf-8"))
+            except Exception:
+                return super().dropEvent(event)
+
+            drop_row = self.indexAt(event.position().toPoint()).row()
+            if drop_row < 0:
+                drop_row = self.count()  # append
+
+            if source_row < 0 or source_row >= self.count():
+                return
+
+            if drop_row > source_row:
+                drop_row -= 1
+
+            if drop_row == source_row:
+                event.acceptProposedAction()
+                return
+
+            item = self.item(source_row)
+            widget = self.itemWidget(item)
+
+            taken = self.takeItem(source_row)
+            if taken is None:
+                return
+
+            self.insertItem(drop_row, taken)
+            if widget is not None:
+                taken.setSizeHint(widget.sizeHint())
+                self.setItemWidget(taken, widget)
+
+            event.acceptProposedAction()
+            self.order_changed.emit()
+            return
+
+        super().dropEvent(event)
+
 
 class PagePreviewWidget(QWidget):
     """Grid of page thumbnails with drag support."""
@@ -112,107 +220,215 @@ class PagePreviewWidget(QWidget):
         
         drag.exec(Qt.DropAction.MoveAction)
 
+class SplitGroupPageList(QListWidget):
+    """A page list that supports both external page drops and internal reordering."""
+
+    page_dropped = pyqtSignal(int)  # page_num (0-indexed)
+    order_changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+
+        # Emits whenever rows move (drag reorder)
+        self.model().rowsMoved.connect(lambda *_: self.order_changed.emit())
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text().startswith("page:"):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text().startswith("page:"):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        # Internal reorder
+        if event.source() is self:
+            super().dropEvent(event)
+            return
+
+        # External drop from preview (mime: "page:<num>")
+        if event.mimeData().hasText() and event.mimeData().text().startswith("page:"):
+            try:
+                page_num = int(event.mimeData().text().split(":", 1)[1])
+                self.page_dropped.emit(page_num)
+                event.acceptProposedAction()
+            except Exception:
+                event.ignore()
+            return
+
+        super().dropEvent(event)
+
+
+class OrderablePageList(QListWidget):
+    """Simple list widget that supports internal drag-reordering."""
+
+    order_changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.model().rowsMoved.connect(lambda *_: self.order_changed.emit())
+
+
 class SplitGroupPanel(QWidget):
     """Panel for managing individual split groups."""
+
     remove_requested = pyqtSignal(str)  # split_name
     rename_requested = pyqtSignal(str, str)  # old_name, new_name
     pages_changed = pyqtSignal()
-    
+
     def __init__(self, split_name: str):
         super().__init__()
         self.split_name = split_name
         self.pages = []
         self.init_ui()
         self.setAcceptDrops(True)
-    
+
     def init_ui(self):
         layout = QVBoxLayout()
-        
+
         # Header with name and buttons
         header = QHBoxLayout()
         self.name_label = QLineEdit(self.split_name)
         self.name_label.setMaximumWidth(150)
         header.addWidget(QLabel("Split:"))
         header.addWidget(self.name_label)
-        
+
         rename_btn = QPushButton("Rename")
         rename_btn.clicked.connect(self.on_rename)
         header.addWidget(rename_btn)
-        
+
+        auto_order_btn = QPushButton("Auto order")
+        auto_order_btn.setToolTip("Sort pages in this split group by page number")
+        auto_order_btn.clicked.connect(self.on_auto_order)
+        header.addWidget(auto_order_btn)
+
         remove_btn = QPushButton("Remove")
         remove_btn.setStyleSheet("background-color: #ffcccc;")
         remove_btn.clicked.connect(self.on_remove)
         header.addWidget(remove_btn)
         header.addStretch()
-        
+
         layout.addLayout(header)
-        
-        # Page list
-        self.page_list = QListWidget()
+
+        # Page list (drag to reorder)
+        self.page_list = SplitGroupPageList()
         self.page_list.setMaximumHeight(120)
+        self.page_list.page_dropped.connect(self.on_page_dropped)
+        self.page_list.order_changed.connect(self.on_order_changed)
         layout.addWidget(self.page_list)
-        
+
         # Info
         self.info_label = QLabel("0 pages")
         layout.addWidget(self.info_label)
-        
+
         self.setLayout(layout)
-    
+
     def add_page(self, page_obj):
         """Add page to this split."""
         if page_obj.page_num not in [p.page_num for p in self.pages]:
             self.pages.append(page_obj)
             item = QListWidgetItem(f"Page {page_obj.page_num + 1}")
+            item.setData(Qt.ItemDataRole.UserRole, page_obj.page_num)
             self.page_list.addItem(item)
             self.update_info()
             self.pages_changed.emit()
-    
+
     def remove_page(self, page_num):
         """Remove page from this split."""
         self.pages = [p for p in self.pages if p.page_num != page_num]
         for i in range(self.page_list.count()):
             item = self.page_list.item(i)
-            if f"Page {page_num + 1}" in item.text():
+            if item.data(Qt.ItemDataRole.UserRole) == page_num:
                 self.page_list.takeItem(i)
                 break
         self.update_info()
         self.pages_changed.emit()
-    
+
     def update_info(self):
         """Update page count display."""
         count = len(self.pages)
-        page_nums = sorted([p.page_num + 1 for p in self.pages])
+        page_nums = [p.page_num + 1 for p in self.pages]
         self.info_label.setText(f"{count} page(s): {page_nums}")
-    
+
+    def on_page_dropped(self, page_num: int):
+        """Handle external page drop onto the list."""
+        try:
+            from models.pdf_model import PDFPage
+            self.add_page(PDFPage(page_num=page_num))
+        except Exception:
+            return
+
+    def on_order_changed(self):
+        """Sync underlying page order from visual list order."""
+        self._sync_pages_from_list()
+        self.update_info()
+        self.pages_changed.emit()
+
+    def _sync_pages_from_list(self):
+        page_by_num = {p.page_num: p for p in self.pages}
+        ordered = []
+        for i in range(self.page_list.count()):
+            item = self.page_list.item(i)
+            page_num = item.data(Qt.ItemDataRole.UserRole)
+            if page_num in page_by_num:
+                ordered.append(page_by_num[page_num])
+        remaining = [p for p in self.pages if p.page_num not in {p.page_num for p in ordered}]
+        self.pages = ordered + remaining
+
+    def on_auto_order(self):
+        """Sort pages by page number ascending (1..N)."""
+        self.pages.sort(key=lambda p: p.page_num)
+        self.page_list.clear()
+        for page_obj in self.pages:
+            item = QListWidgetItem(f"Page {page_obj.page_num + 1}")
+            item.setData(Qt.ItemDataRole.UserRole, page_obj.page_num)
+            self.page_list.addItem(item)
+        self.update_info()
+        self.pages_changed.emit()
+
     def on_rename(self):
         """Rename this split."""
         new_name = self.name_label.text().strip()
         if new_name and new_name != self.split_name:
             self.rename_requested.emit(self.split_name, new_name)
             self.split_name = new_name
-    
+
     def on_remove(self):
         """Request removal of this split."""
         self.remove_requested.emit(self.split_name)
-    
+
     def dragEnterEvent(self, event):
-        """Accept drag if it's a page."""
-        if event.mimeData().hasText() and "page:" in event.mimeData().text():
+        """Accept drag if it's a page (drop anywhere on panel)."""
+        if event.mimeData().hasText() and event.mimeData().text().startswith("page:"):
             event.acceptProposedAction()
-    
+            return
+        super().dragEnterEvent(event)
+
     def dropEvent(self, event):
-        """Handle drop of page."""
-        mime_text = event.mimeData().text()
-        if mime_text.startswith("page:"):
+        """Handle drop of page onto the panel (outside the list)."""
+        if event.mimeData().hasText() and event.mimeData().text().startswith("page:"):
             try:
-                page_num = int(mime_text.split(":")[1])
-                # Create a simple page object for now
-                # In real app, fetch from main document
-                from models.pdf_model import PDFPage
-                page = PDFPage(page_num=page_num)
-                self.add_page(page)
-            except:
-                pass
+                page_num = int(event.mimeData().text().split(":", 1)[1])
+                self.on_page_dropped(page_num)
+                event.acceptProposedAction()
+            except Exception:
+                event.ignore()
+            return
+        super().dropEvent(event)
 
 class PageIndexSplitWidget(QWidget):
     """Widget for splitting PDF by page indices."""
@@ -477,7 +693,16 @@ class PDFFileItemWidget(QWidget):
         self.total_pages = total_pages
         self.selected_pages = list(range(0, total_pages))  # Default: all pages
         self.page_rotations = {}  # page_num -> degrees
+        self._file_list_widget = None
+        self._file_list_item = None
         self.init_ui()
+
+    def attach_drag_context(self, list_widget: QListWidget, list_item: QListWidgetItem):
+        """Enable dragging this file widget up/down within the combine panel."""
+        self._file_list_widget = list_widget
+        self._file_list_item = list_item
+        if hasattr(self, "drag_handle") and self.drag_handle:
+            self.drag_handle.set_drag_context(list_widget, list_item)
     
     def init_ui(self):
         layout = QVBoxLayout()
@@ -485,6 +710,10 @@ class PDFFileItemWidget(QWidget):
         # File info header
         filename = Path(self.filepath).name
         header = QHBoxLayout()
+
+        self.drag_handle = DragHandleLabel()
+        header.addWidget(self.drag_handle)
+
         header.addWidget(QLabel(f"📄 {filename}"))
         header.addWidget(QLabel(f"({self.total_pages} pages)"))
         
@@ -526,15 +755,31 @@ class PDFFileItemWidget(QWidget):
         preview_btn.setMaximumWidth(80)
         preview_btn.clicked.connect(self.open_preview)
         preset_layout.addWidget(preview_btn)
+
+        auto_order_btn = QPushButton("Auto order")
+        auto_order_btn.setMaximumWidth(90)
+        auto_order_btn.setToolTip("Sort selected pages ascending")
+        auto_order_btn.clicked.connect(self.auto_order_pages)
+        preset_layout.addWidget(auto_order_btn)
         
         selection_layout.addLayout(preset_layout)
         layout.addLayout(selection_layout)
+
+        # Selected pages order (drag to reorder)
+        layout.addWidget(QLabel("Selected page order:"))
+        self.order_list = OrderablePageList()
+        self.order_list.setMaximumHeight(120)
+        self.order_list.order_changed.connect(self.on_order_list_changed)
+        layout.addWidget(self.order_list)
         
         # Info
         self.info_label = QLabel(f"Selected: all {self.total_pages} pages")
         layout.addWidget(self.info_label)
         
         self.setLayout(layout)
+
+        # Build initial ordering list
+        self.rebuild_order_list()
     
     def on_pages_changed(self):
         """Update selected pages based on input."""
@@ -551,6 +796,7 @@ class PDFFileItemWidget(QWidget):
                 pass
         
         self.update_info()
+        self.rebuild_order_list()
         self.pages_changed.emit()
     
     def _parse_pages(self, text: str) -> list:
@@ -581,8 +827,9 @@ class PDFFileItemWidget(QWidget):
                 if page < 1 or page > self.total_pages:
                     raise ValueError(f"Invalid page: {page}")
                 pages.append(page - 1)
-        
-        return sorted(list(set(pages)))  # Remove duplicates, sort
+
+        # Remove duplicates but KEEP order
+        return list(dict.fromkeys(pages))
     
     def select_first_half(self):
         """Select first half of pages."""
@@ -612,28 +859,77 @@ class PDFFileItemWidget(QWidget):
         """Format page list for display (convert back to 1-indexed)."""
         if not pages:
             return "none"
-        
-        formatted = []
-        start = pages[0] + 1
-        end = start
-        
-        for i in range(1, len(pages)):
-            if pages[i] == pages[i-1] + 1:
-                end = pages[i] + 1
-            else:
-                if start == end:
-                    formatted.append(str(start))
+
+        # If the list is already ascending, keep the compact range formatting.
+        if pages == sorted(pages):
+            formatted = []
+            start = pages[0] + 1
+            end = start
+
+            for i in range(1, len(pages)):
+                if pages[i] == pages[i - 1] + 1:
+                    end = pages[i] + 1
                 else:
-                    formatted.append(f"{start}-{end}")
-                start = pages[i] + 1
-                end = start
-        
-        if start == end:
-            formatted.append(str(start))
-        else:
-            formatted.append(f"{start}-{end}")
-        
-        return ", ".join(formatted[:3]) + ("..." if len(formatted) > 3 else "")
+                    if start == end:
+                        formatted.append(str(start))
+                    else:
+                        formatted.append(f"{start}-{end}")
+                    start = pages[i] + 1
+                    end = start
+
+            if start == end:
+                formatted.append(str(start))
+            else:
+                formatted.append(f"{start}-{end}")
+
+            return ", ".join(formatted[:3]) + ("..." if len(formatted) > 3 else "")
+
+        # Otherwise show explicit order.
+        shown = ", ".join(str(p + 1) for p in pages[:10])
+        return shown + ("..." if len(pages) > 10 else "")
+
+    def rebuild_order_list(self):
+        """Rebuild the visible ordering list from selected_pages."""
+        if not hasattr(self, 'order_list'):
+            return
+        self.order_list.blockSignals(True)
+        try:
+            self.order_list.clear()
+            for page_num in self.selected_pages:
+                item = QListWidgetItem(f"Page {page_num + 1}")
+                item.setData(Qt.ItemDataRole.UserRole, page_num)
+                self.order_list.addItem(item)
+        finally:
+            self.order_list.blockSignals(False)
+
+    def on_order_list_changed(self):
+        """Sync selected_pages from the visual order list."""
+        ordered = []
+        for i in range(self.order_list.count()):
+            item = self.order_list.item(i)
+            page_num = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(page_num, int):
+                ordered.append(page_num)
+        self.selected_pages = ordered
+
+        # Drag-reordering creates a custom order that no longer matches the
+        # user's typed page selection expression. Clear the input to avoid
+        # implying the typed expression still applies.
+        if self.pages_input.text():
+            self.pages_input.blockSignals(True)
+            try:
+                self.pages_input.setText("")
+            finally:
+                self.pages_input.blockSignals(False)
+        self.update_info()
+        self.pages_changed.emit()
+
+    def auto_order_pages(self):
+        """Sort currently selected pages ascending."""
+        self.selected_pages = sorted(self.selected_pages)
+        self.rebuild_order_list()
+        self.update_info()
+        self.pages_changed.emit()
     
     def on_remove(self):
         """Request removal of this file."""
@@ -668,20 +964,26 @@ class CombinePDFWidget(QWidget):
         add_btn.clicked.connect(self.add_pdf_file)
         layout.addWidget(add_btn)
         
-        # Scrollable area for PDFs
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        
-        self.scroll_widget = QWidget()
-        self.files_layout = QVBoxLayout(self.scroll_widget)
-        scroll.setWidget(self.scroll_widget)
-        layout.addWidget(scroll)
-        
-        # Combine button
+        # Reorderable list of loaded PDFs (drag the handle to change order)
+        self.file_list = PDFFileListWidget()
+        self.file_list.setSpacing(6)
+        self.file_list.order_changed.connect(self.update_info)
+        layout.addWidget(self.file_list, 1)
+
+        # Actions
+        actions = QHBoxLayout()
+
+        preview_btn = QPushButton("Preview combined")
+        preview_btn.setToolTip("Generate a temporary combined PDF and open it in your PDF viewer")
+        preview_btn.clicked.connect(self.on_preview_combined)
+        actions.addWidget(preview_btn)
+
         combine_btn = QPushButton("Combine Selected Pages")
         combine_btn.setStyleSheet("background-color: #ccffcc; color: #1f2937; font-weight: 600;")
         combine_btn.clicked.connect(self.on_combine)
-        layout.addWidget(combine_btn)
+        actions.addWidget(combine_btn)
+
+        layout.addLayout(actions)
         
         # Info
         self.info_label = QLabel("Add 2+ PDF files to combine")
@@ -699,18 +1001,31 @@ class CombinePDFWidget(QWidget):
             from services.pdf_service import PDFService
             doc = PDFService.load_pdf(file_path)
             if doc:
-                item = PDFFileItemWidget(file_path, doc.total_pages)
-                item.removed.connect(self.on_file_removed)
-                item.pages_changed.connect(self.update_info)
-                
-                self.pdf_files[file_path] = item
-                self.files_layout.addWidget(item)
+                widget = PDFFileItemWidget(file_path, doc.total_pages)
+                widget.removed.connect(self.on_file_removed)
+                widget.pages_changed.connect(self.update_info)
+
+                list_item = QListWidgetItem()
+                list_item.setSizeHint(widget.sizeHint())
+                self.file_list.addItem(list_item)
+                self.file_list.setItemWidget(list_item, widget)
+                widget.attach_drag_context(self.file_list, list_item)
+
+                self.pdf_files[file_path] = widget
                 self.update_info()
     
     def on_file_removed(self, filepath: str):
         """Remove a PDF file from combine."""
         if filepath in self.pdf_files:
             widget = self.pdf_files[filepath]
+
+            # Remove the corresponding row from the reorderable list.
+            for row in range(self.file_list.count()):
+                item = self.file_list.item(row)
+                if self.file_list.itemWidget(item) is widget:
+                    self.file_list.takeItem(row)
+                    break
+
             widget.deleteLater()
             del self.pdf_files[filepath]
             self.update_info()
@@ -726,19 +1041,61 @@ class CombinePDFWidget(QWidget):
             self.info_label.setText(f"Add {2 - count} more PDF file(s)")
         else:
             self.info_label.setText(f"{count} files, {total} total pages to combine")
+
+    def _gather_combine_data_in_order(self) -> list:
+        """Return combine_data in the current (dragged) file order."""
+        combine_data = []
+        for row in range(self.file_list.count()):
+            item = self.file_list.item(row)
+            widget = self.file_list.itemWidget(item)
+            if isinstance(widget, PDFFileItemWidget) and widget.selected_pages:
+                combine_data.append((widget.filepath, widget.selected_pages, widget.page_rotations.copy()))
+        return combine_data
     
+    def on_preview_combined(self):
+        """Generate a temporary combined PDF and open it for preview."""
+        if len(self.pdf_files) < 2:
+            QMessageBox.warning(self, "Warning", "Add at least 2 PDF files to combine")
+            return
+
+        # Gather combine data (in the current file order)
+        combine_data = self._gather_combine_data_in_order()
+
+        if not combine_data:
+            QMessageBox.warning(self, "Warning", "No pages selected to preview")
+            return
+
+        # Write preview PDF under ./output so we don't prompt for a path.
+        # Use a unique filename so a previously opened preview isn't overwritten/locked.
+        import time
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        preview_path = out_dir / f"combined_preview_{int(time.time())}.pdf"
+
+        from services.pdf_service import PDFService
+        result = PDFService.combine_pdfs(combine_data, str(preview_path))
+        if not result.get("success"):
+            msg = "Preview failed!\n\n" + "\n".join(result.get("errors") or [])
+            QMessageBox.critical(self, "Error", msg)
+            return
+
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(preview_path)))
+        if not opened:
+            QMessageBox.information(
+                self,
+                "Preview created",
+                f"Preview PDF created but could not be opened automatically:\n{preview_path}",
+            )
+
     def on_combine(self):
         """Prepare combine data."""
         if len(self.pdf_files) < 2:
             QMessageBox.warning(self, "Warning", "Add at least 2 PDF files to combine")
             return
         
-        # Gather combine data
-        combine_data = []
-        for filepath, item in self.pdf_files.items():
-            if item.selected_pages:
-                combine_data.append((filepath, item.selected_pages, item.page_rotations.copy()))
-        
+        # Gather combine data (in the current file order)
+        combine_data = self._gather_combine_data_in_order()
+
         if combine_data:
             self.combine_ready.emit(combine_data)
 

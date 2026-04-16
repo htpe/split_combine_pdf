@@ -22,7 +22,8 @@ class ExportDialog(QDialog):
         layout.addWidget(QLabel("Export Summary:"))
         self.summary_list = QListWidget()
         for name, pages in self.splits_data.items():
-            item = QListWidgetItem(f"{name}: {len(pages)} page(s) {sorted(pages)}")
+            pages_display = [p + 1 for p in pages]
+            item = QListWidgetItem(f"{name}: {len(pages)} page(s) {pages_display}")
             self.summary_list.addItem(item)
         layout.addWidget(self.summary_list)
         

@@ -11,6 +11,9 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },
+            "redirectOutput": true,
+            "logToFile": true,
+            "subProcess": true,
             "justMyCode": true
         },
         {
@@ -23,7 +26,21 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             },
+            "redirectOutput": true,
+            "logToFile": true,
+            "subProcess": true,
             "justMyCode": false
+        },
+        {
+            "name": "Attach (debugpy :5678)",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 5678
+            },
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
         }
     ]
 }

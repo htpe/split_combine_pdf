@@ -90,10 +90,12 @@ class PDFService:
                     continue
                 
                 writer = PdfWriter()
-                
-                # Add pages to writer (sorted)
-                sorted_pages = sorted(page_nums)
-                for page_num in sorted_pages:
+
+                # Add pages to writer (preserve user-defined order)
+                # Also de-duplicate while keeping first occurrence.
+                ordered_pages = list(dict.fromkeys(page_nums))
+                valid_pages = [p for p in ordered_pages if isinstance(p, int) and 0 <= p < len(reader.pages)]
+                for page_num in valid_pages:
                     if 0 <= page_num < len(reader.pages):
                         added_page = writer.add_page(reader.pages[page_num])
                         rotation = (
@@ -105,8 +107,13 @@ class PDFService:
                             added_page.rotate(rotation)
                 
                 # Generate output filename: <source_name>_<first_page>-<last_page>.pdf
-                first = sorted_pages[0] + 1
-                last = sorted_pages[-1] + 1
+                if not valid_pages:
+                    results["errors"].append(f"Split '{split_name}' has no valid pages, skipping")
+                    continue
+
+                # Keep filename stable: use min/max page index rather than custom order.
+                first = min(valid_pages) + 1
+                last = max(valid_pages) + 1
                 page_range = f"{first}-{last}" if first != last else str(first)
                 output_path = os.path.join(output_dir, f"{base_name}_{page_range}.pdf")
                 
@@ -153,8 +160,9 @@ class PDFService:
                     continue
 
                 reader = PdfReader(filepath)
-                for page_num in sorted(set(page_nums)):
-                    if 0 <= page_num < len(reader.pages):
+                ordered_pages = list(dict.fromkeys(page_nums or []))
+                for page_num in ordered_pages:
+                    if isinstance(page_num, int) and 0 <= page_num < len(reader.pages):
                         added_page = writer.add_page(reader.pages[page_num])
                         rotation = page_rotations.get(page_num, 0)
                         if rotation:
